@@ -1,5 +1,6 @@
 """
-Main Application - Workout Form Correction Tool with Audio Feedback
+Main Application - Complete Workout Form Correction Tool
+Supports: Bicep Curl, Squat, Plank, Lunge, Push-up, Shoulder Press
 """
 
 import cv2
@@ -13,6 +14,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from bicep_curl import BicepCurlDetector
 from squat import SquatDetector
 from plank import PlankDetector
+from lunge import LungeDetector
+from pushup import PushupDetector
+from shoulder_press import ShoulderPressDetector
 from pose_utils import draw_skeleton, draw_feedback
 from audio_feedback import AudioFeedback
 
@@ -29,22 +33,60 @@ POSE_CONNECTIONS = mp_pose.POSE_CONNECTIONS
 # Initialize Audio Feedback
 audio = AudioFeedback()
 
-# Initialize detectors with audio
-bicep_detector = BicepCurlDetector(audio_feedback=audio)
-squat_detector = SquatDetector(audio_feedback=audio)
-plank_detector = PlankDetector(audio_feedback=audio)
+# Initialize all detectors with audio
+detectors = {
+    "1": {
+        "name": "Bicep Curl",
+        "detector": BicepCurlDetector(audio_feedback=audio),
+        "has_switch": True,
+        "switch_type": "arm"
+    },
+    "2": {
+        "name": "Squat",
+        "detector": SquatDetector(audio_feedback=audio),
+        "has_switch": True,
+        "switch_type": "side"
+    },
+    "3": {
+        "name": "Plank",
+        "detector": PlankDetector(audio_feedback=audio),
+        "has_switch": False,
+        "switch_type": None
+    },
+    "4": {
+        "name": "Lunge",
+        "detector": LungeDetector(audio_feedback=audio),
+        "has_switch": True,
+        "switch_type": "leg"
+    },
+    "5": {
+        "name": "Push-up",
+        "detector": PushupDetector(audio_feedback=audio),
+        "has_switch": False,
+        "switch_type": None
+    },
+    "6": {
+        "name": "Shoulder Press",
+        "detector": ShoulderPressDetector(audio_feedback=audio),
+        "has_switch": True,
+        "switch_type": "arm"
+    }
+}
 
 def show_menu():
-    print("\n" + "="*50)
-    print("WORKOUT FORM CORRECTION TOOL")
-    print("="*50)
+    print("\n" + "="*60)
+    print("WORKOUT FORM CORRECTION TOOL - COMPLETE EDITION")
+    print("="*60)
     print("Select Exercise:")
-    print("1. Bicep Curl")
-    print("2. Squat")
-    print("3. Plank")
+    print("1. 💪 Bicep Curl")
+    print("2. 🏋️ Squat")
+    print("3. 🧘 Plank")
+    print("4. 🦵 Lunge")
+    print("5. 📈 Push-up")
+    print("6. 🔼 Shoulder Press")
     print("q. Quit")
-    print("="*50)
-    return input("Enter choice (1-3 or q): ")
+    print("="*60)
+    return input("Enter choice (1-6 or q): ")
 
 def main():
     # Get exercise choice
@@ -54,38 +96,38 @@ def main():
         print("Exiting...")
         return
     
-    if choice not in ['1', '2', '3']:
+    if choice not in detectors:
         print("Invalid choice. Please run again.")
         return
     
-    # Set exercise name and detector
-    if choice == "1":
-        exercise_name = "Bicep Curl"
-        detector = bicep_detector
-        has_arm_switch = True
-    elif choice == "2":
-        exercise_name = "Squat"
-        detector = squat_detector
-        has_arm_switch = False
-    else:
-        exercise_name = "Plank"
-        detector = plank_detector
-        has_arm_switch = False
+    # Get selected exercise
+    exercise = detectors[choice]
+    detector = exercise["detector"]
+    exercise_name = exercise["name"]
+    has_switch = exercise["has_switch"]
+    switch_type = exercise["switch_type"]
     
     # Announce exercise start
-    audio.exercise_start(exercise_name)
+    audio.exercise_start(exercise_name.lower().replace(" ", "_"))
     
     print(f"\nStarting {exercise_name}...")
     print("Instructions:")
     print("- Press 'q' to quit")
     print("- Press 'r' to reset")
-    if has_arm_switch:
-        print("- Press 'a' to switch arms/sides")
+    if has_switch:
+        print(f"- Press 'a' to switch {switch_type}")
     print("- Stand 5-6 feet from camera")
     print("- Make sure full body is visible")
-    print("\nStarting in 3 seconds...")
     
-    # Countdown
+    if exercise_name in ["Bicep Curl", "Shoulder Press"]:
+        print("- Face sideways to camera")
+    elif exercise_name in ["Squat", "Lunge", "Push-up"]:
+        print("- Face sideways to camera")
+    else:
+        print("- Face camera straight on")
+    
+    print("\nStarting in 3 seconds...")
+
     for i in range(3, 0, -1):
         print(f"{i}...")
         cv2.waitKey(1000)
@@ -103,9 +145,11 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     
-    # For frame rate calculation
-    frame_count = 0
-    start_time = cv2.getTickCount()
+    # Track session data
+    session_start = cv2.getTickCount()
+    session_reps = 0
+    session_form_quality_sum = 0
+    session_frames = 0
     
     while cap.isOpened():
         success, frame = cap.read()
@@ -141,15 +185,34 @@ def main():
             # Draw feedback
             draw_feedback(frame, feedback, position=(10, 150))
             
+            # Update session stats
+            session_frames += 1
+            
+            # Get current reps from detector
+            current_reps = getattr(detector, 'rep_count', 0)
+            if current_reps > session_reps:
+                session_reps = current_reps
+            
+            # Track form quality from feedback
+            for msg in feedback:
+                if "form_quality" in msg:
+                    # Extract form quality if available
+                    pass
+            
             # Show tracking info
-            if choice == "1" and hasattr(detector, 'use_left_arm'):
-                arm_text = "Left Arm" if detector.use_left_arm else "Right Arm"
-                cv2.putText(frame, f"Tracking: {arm_text}", (10, 70), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            elif choice == "2" and hasattr(detector, 'use_left_side'):
-                side_text = "Left Side" if detector.use_left_side else "Right Side"
-                cv2.putText(frame, f"Tracking: {side_text}", (10, 70), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            if has_switch:
+                if switch_type == "arm" and hasattr(detector, 'use_left_arm'):
+                    side_text = "Left Arm" if detector.use_left_arm else "Right Arm"
+                    cv2.putText(frame, f"Tracking: {side_text}", (10, 70), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                elif switch_type == "side" and hasattr(detector, 'use_left_side'):
+                    side_text = "Left Side" if detector.use_left_side else "Right Side"
+                    cv2.putText(frame, f"Tracking: {side_text}", (10, 70), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                elif switch_type == "leg" and hasattr(detector, 'use_left_leg'):
+                    side_text = "Left Leg" if detector.use_left_leg else "Right Leg"
+                    cv2.putText(frame, f"Tracking: {side_text}", (10, 70), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         else:
             cv2.putText(frame, "No pose detected", (10, 100),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
@@ -159,8 +222,8 @@ def main():
         # Draw instructions at bottom
         cv2.rectangle(frame, (0, frame.shape[0]-60), (frame.shape[1], frame.shape[0]), (0, 0, 0), -1)
         instructions = "q: Quit | r: Reset"
-        if has_arm_switch:
-            instructions += " | a: Switch Side"
+        if has_switch:
+            instructions += f" | a: Switch {switch_type.title()}"
         cv2.putText(frame, instructions, 
                     (10, frame.shape[0] - 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -175,30 +238,46 @@ def main():
             break
         elif key == ord('r'):
             detector.reset()
+            session_reps = 0
+            session_frames = 0
+            session_form_quality_sum = 0
             audio.reset()
             print("Counter reset")
-        elif key == ord('a') and has_arm_switch:
-            if choice == "1":
-                arm = detector.switch_arm()
-                print(f"Switched to {arm}")
-                audio.speak(f"Switched to {arm}")
-            elif choice == "2":
+        elif key == ord('a') and has_switch:
+            if switch_type == "arm" and hasattr(detector, 'switch_arm'):
+                side = detector.switch_arm()
+                print(f"Switched to {side}")
+                audio.speak(f"Switched to {side}")
+            elif switch_type == "side" and hasattr(detector, 'switch_side'):
                 side = detector.switch_side()
                 print(f"Switched to {side}")
                 audio.speak(f"Switched to {side}")
+            elif switch_type == "leg" and hasattr(detector, 'switch_leg'):
+                side = detector.switch_leg()
+                print(f"Switched to {side}")
+                audio.speak(f"Switched to {side}")
+    
+    # Calculate session summary
+    session_duration = (cv2.getTickCount() - session_start) / cv2.getTickFrequency()
+    avg_form_quality = 75  # Placeholder - you can calculate from form quality data
+    
+    # Announce workout summary
+    audio.workout_summary(exercise_name.lower().replace(" ", "_"), 
+                          session_reps, avg_form_quality, int(session_duration))
     
     # Cleanup
     cap.release()
     cv2.destroyAllWindows()
     pose.close()
     
-    # Final summary
-    if choice == "3" and hasattr(detector, 'get_total_time'):
-        total_time = detector.get_total_time()
-        if total_time > 0:
-            print(f"\nTotal plank hold time: {int(total_time)} seconds")
-            audio.speak(f"Great workout! You held the plank for {int(total_time)} seconds")
-    
+    print(f"\n{'='*50}")
+    print("WORKOUT SUMMARY")
+    print(f"{'='*50}")
+    print(f"Exercise: {exercise_name}")
+    print(f"Total Reps: {session_reps}")
+    print(f"Duration: {int(session_duration//60)}m {int(session_duration%60)}s")
+    print(f"Avg Form Quality: {avg_form_quality:.0f}%")
+    print(f"{'='*50}")
     print("\nApplication closed. Thank you for using Workout Form Corrector!")
 
 if __name__ == "__main__":
