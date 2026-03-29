@@ -1,0 +1,11 @@
+#virtual environment
+.venv/
+venv/
+env/
+
+#Pycache
+__pycache__/
+*.pyc 
+
+#local environement
+.env
