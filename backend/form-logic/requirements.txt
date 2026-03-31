@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+websockets
+pyttsx3
+mediapipe
+numpy
