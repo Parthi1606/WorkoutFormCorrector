@@ -2,11 +2,15 @@
   "expo": {
     "name": "repRight-app",
     "slug": "repRight-app",
-    "owner":"aaliyadesousa",
+    "owner": "aaliyadesousa",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "reprightapp",
+    "scheme": "repright-app",
+    "extra": {
+      "googleClientId": "597817830458-07ognj6gmmljt7a2v62akc4j7bqiqjas.apps.googleusercontent.com",
+      "androidClientId": "597817830458-nj9icr7gopkm2s14sr75kttsk2b6i0bf.apps.googleusercontent.com"
+    },
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -41,8 +45,18 @@
           }
         }
       ],
-      "expo-web-browser"
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "RepRight needs camera access to analyse your form in real time."
+        }
+      ],
+      "expo-router",
+      "expo-web-browser",
+      "expo-font",
+      "@react-native-google-signin/google-signin"
     ],
+    
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
