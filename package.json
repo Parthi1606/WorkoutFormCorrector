@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
+    "expo": "~55.0.9",
+    "react": "19.2.0",
+    "react-native": "0.83.4"
+  },
+  "name": "WorkoutFormCorrector",
+  "version": "1.0.0",
+  "scripts": {}
+}

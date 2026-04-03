@@ -103,7 +103,11 @@ export default function TrainingScreen() {
           <ExerciseCard
             key={ex.key}
             ex={ex}
-            onPress={() => router.push(`/correct-form/${ex.key}`)}
+            
+            onPress={() => {
+              console.log("Going to:", `/correct-form/${ex.key}`);
+              router.push(`/correct-form/${ex.key}`);
+            }}
           />
         ))}
       </View>

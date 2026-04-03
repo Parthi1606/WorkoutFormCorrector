@@ -1,11 +1,51 @@
-#virtual environment
+# =========================
+# Python
+# =========================
 .venv/
 venv/
 env/
 
-#Pycache
 __pycache__/
-*.pyc 
+*.pyc
+*.pyo
+*.pyd
 
-#local environement
+# Python build / packaging
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Environment variables
+# =========================
 .env
+
+# =========================
+# Node / React Native
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Expo / React Native
+.expo/
+.expo-shared/
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Misc
+# =========================
+*.log
+*.keystore

@@ -1,33 +1,35 @@
-// app/(tabs)/profile.tsx  — Profile screen
+// app/(tabs)/profile.tsx
+// Profile screen — pulls real stats from the backend via useStats hook.
+// Falls back gracefully to zeros for guest users.
+
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView,
-  SafeAreaView, StatusBar, TouchableOpacity, Switch,
+  SafeAreaView, StatusBar, TouchableOpacity,
+  Switch, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors, Radius, Font, Shadow } from '@/constants/theme';
 import { useAuthStore } from '@/store/authStore';
+import { useStats } from '@/hooks/useStats';
 import ScreenWrapper from '@/components/ui/ScreenWrapper';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 
-// Mock exercise breakdown — replace with real data from your API
-const EXERCISE_STATS = [
-  { emoji: '🏋️', name: 'Bicep Curl',  detail: '48 reps · 12 sessions', score: 92, tier: 'hi'  },
-  { emoji: '🦵', name: 'Squat',        detail: '60 reps · 8 sessions',  score: 78, tier: 'mid' },
-  { emoji: '🧘', name: 'Plank',        detail: '4m 20s total',          score: 95, tier: 'hi'  },
-];
-
-const SCORE_COLORS: Record<string, string> = {
-  hi:  Colors.green,
-  mid: Colors.yellow,
-  lo:  Colors.red,
-};
+// Tier colour by accuracy band
+function scoreTier(score: number): string {
+  if (score >= 85) return Colors.green;
+  if (score >= 65) return Colors.yellow;
+  return Colors.red;
+}
 
 export default function ProfileScreen() {
   const router  = useRouter();
   const user    = useAuthStore((s) => s.user);
   const logout  = useAuthStore((s) => s.logout);
-
   const [haptic, setHaptic] = useState(true);
+
+  // Real stats from API
+  const { stats, breakdown, loading, error, refresh } = useStats();
 
   const handleLogout = () => {
     logout();
@@ -35,107 +37,135 @@ export default function ProfileScreen() {
   };
 
   const displayName  = user?.name  ?? 'Guest';
-  const displayEmail = user?.email ?? 'Training Mode';
+  const displayEmail = user?.email ?? 'Guest Mode';
+  const isGuest      = !user?.id;
+
+  // Header stat values — fallback to 0 for guests or while loading
+  const streak       = stats?.streak         ?? 0;
+  const totalReps    = stats?.total_reps      ?? 0;
+  const avgForm      = stats?.avg_form        ?? 0;
 
   return (
     <ScreenWrapper>
       <View style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
+        <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
 
-      <View style={styles.header}>
-        <Text style={styles.title}>Profile</Text>
-        <TouchableOpacity>
-          <Text style={styles.settingsIcon}>⚙</Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-
-        {/* Avatar + name */}
-        <View style={styles.hero}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {user?.avatarUrl ? '🖼' : '👤'}
-            </Text>
-          </View>
-          <View>
-            <Text style={styles.name}>{displayName}</Text>
-            <Text style={styles.email}>{displayEmail}</Text>
-            {user && (
-              <TouchableOpacity>
-                <Text style={styles.editLink}>Edit profile →</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+        <View style={styles.header}>
+          <Text style={styles.title}>Profile</Text>
+          <TouchableOpacity onPress={refresh}>
+            <Text style={styles.settingsIcon}>⚙</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Stats */}
-        <View style={styles.stats}>
-          <View style={[styles.statItem, styles.statAccent]}>
-            <Text style={[styles.statVal, { color: Colors.orange }]}>6</Text>
-            <Text style={styles.statLbl}>Streak</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statVal}>142</Text>
-            <Text style={styles.statLbl}>Reps</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statVal}>87%</Text>
-            <Text style={styles.statLbl}>Form</Text>
-          </View>
-        </View>
-
-        {/* Exercise breakdown */}
-        <Text style={styles.secLabel}>EXERCISE BREAKDOWN</Text>
-        {EXERCISE_STATS.map((ex) => (
-          <View key={ex.name} style={styles.exRow}>
-            <Text style={styles.exEmoji}>{ex.emoji}</Text>
-            <View style={styles.exInfo}>
-              <Text style={styles.exName}>{ex.name}</Text>
-              <Text style={styles.exDet}>{ex.detail}</Text>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scroll}
+        >
+          {/* Avatar + name */}
+          <View style={styles.hero}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>👤</Text>
             </View>
-            <Text style={[styles.exScore, { color: SCORE_COLORS[ex.tier] }]}>
-              {ex.score}%
+            <View>
+              <Text style={styles.name}>{displayName}</Text>
+              <Text style={styles.email}>{displayEmail}</Text>
+            </View>
+          </View>
+
+          {/* Aggregate stats */}
+          <View style={styles.stats}>
+            <View style={[styles.statItem, styles.statAccent]}>
+              <Text style={[styles.statVal, { color: Colors.orange }]}>
+                {streak}
+              </Text>
+              <Text style={styles.statLbl}>Streak</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statVal}>{totalReps}</Text>
+              <Text style={styles.statLbl}>Reps</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statVal}>{avgForm}%</Text>
+              <Text style={styles.statLbl}>Form</Text>
+            </View>
+          </View>
+
+          {/* Exercise breakdown */}
+          <Text style={styles.secLabel}>EXERCISE BREAKDOWN</Text>
+
+          {isGuest ? (
+            <Text style={styles.guestNote}>
+              Sign in to track your progress across sessions.
             </Text>
-          </View>
-        ))}
-
-        {/* Settings */}
-        <Text style={styles.secLabel}>SETTINGS</Text>
-        <View style={styles.settingsBlock}>
-
-          {/* Haptic toggle */}
-          <View style={styles.settingRow}>
-            <View style={styles.settingIcon}>
-              <Text>📳</Text>
-            </View>
-            <Text style={styles.settingLbl}>Haptic feedback</Text>
-            <Switch
-              value={haptic}
-              onValueChange={setHaptic}
-              trackColor={{ false: Colors.border, true: Colors.blue }}
-              thumbColor="#fff"
+          ) : loading ? (
+            <ActivityIndicator
+              color={Colors.blue}
+              style={{ marginVertical: 20 }}
             />
+          ) : error ? (
+            <TouchableOpacity onPress={refresh} style={styles.errorRow}>
+              <Text style={styles.errorText}>Could not load stats. Tap to retry.</Text>
+            </TouchableOpacity>
+          ) : breakdown.length === 0 ? (
+            <Text style={styles.guestNote}>
+              Complete a session to see your breakdown here.
+            </Text>
+          ) : (
+            breakdown.map((ex) => (
+              <View key={ex.exercise_key} style={styles.exRow}>
+                <View style={styles.exInfo}>
+                  <Text style={styles.exName}>{ex.exercise_name}</Text>
+                  <Text style={styles.exDet}>
+                    {ex.total_reps} reps · {ex.total_sessions} session
+                    {ex.total_sessions !== 1 ? 's' : ''}
+                  </Text>
+                </View>
+                <Text style={[styles.exScore, { color: scoreTier(ex.avg_accuracy) }]}>
+                  {ex.avg_accuracy}%
+                </Text>
+              </View>
+            ))
+          )}
+
+          {/* Settings */}
+          <Text style={styles.secLabel}>SETTINGS</Text>
+          <View style={styles.settingsBlock}>
+            <View style={styles.settingRow}>
+              <View style={styles.settingIcon}>
+                <Ionicons name="phone-portrait-outline" size={20} color="#555" />
+              </View>
+              <Text style={styles.settingLbl}>Haptic feedback</Text>
+              <Switch
+                value={haptic}
+                onValueChange={setHaptic}
+                trackColor={{ false: Colors.border, true: Colors.blue }}
+                thumbColor="#fff"
+              />
+            </View>
+
+            <TouchableOpacity style={styles.settingRow}>
+              <View style={styles.settingIcon}>
+                <Ionicons name="information-circle-outline" size={20} color="#555" />
+              </View>
+              <Text style={styles.settingLbl}>About RepRight</Text>
+              <Text style={styles.settingChevron}>›</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.settingRow, styles.settingRowLast]}
+              onPress={handleLogout}
+            >
+              <View style={[styles.settingIcon, styles.settingIconDanger]}>
+                <MaterialIcons name="logout" size={20} color="#d9534f" />
+              </View>
+              <Text style={[styles.settingLbl, styles.settingLblDanger]}>
+                Log out
+              </Text>
+              <Text style={styles.settingChevron}>›</Text>
+            </TouchableOpacity>
           </View>
-
-          {/* About */}
-          <TouchableOpacity style={styles.settingRow}>
-            <View style={styles.settingIcon}><Text>ℹ️</Text></View>
-            <Text style={styles.settingLbl}>About RepRight</Text>
-            <Text style={styles.settingChevron}>›</Text>
-          </TouchableOpacity>
-
-          {/* Log out */}
-          <TouchableOpacity style={[styles.settingRow, styles.settingRowLast]} onPress={handleLogout}>
-            <View style={[styles.settingIcon, styles.settingIconDanger]}><Text>🚪</Text></View>
-            <Text style={[styles.settingLbl, styles.settingLblDanger]}>Log out</Text>
-            <Text style={styles.settingChevron}>›</Text>
-          </TouchableOpacity>
-
-        </View>
-
-      </ScrollView>
-    </View>
+        </ScrollView>
+      </View>
     </ScreenWrapper>
   );
 }
@@ -143,7 +173,6 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   root:   { flex: 1 },
   scroll: { paddingBottom: 32 },
-
   header: {
     flexDirection:     'row',
     alignItems:        'center',
@@ -155,15 +184,11 @@ const styles = StyleSheet.create({
   },
   title: {
     fontFamily: Font.display,
-    fontSize:  30,
+    fontSize:   30,
     fontWeight: '800',
     color:      Colors.text,
   },
-  settingsIcon: {
-    fontSize: 20,
-    color:    Colors.text2,
-  },
-
+  settingsIcon: { fontSize: 20, color: Colors.text2 },
   hero: {
     flexDirection:     'row',
     alignItems:        'center',
@@ -180,29 +205,10 @@ const styles = StyleSheet.create({
     borderColor:     Colors.blue,
     alignItems:      'center',
     justifyContent:  'center',
-    flexShrink:      0,
   },
   avatarText: { fontSize: 26 },
-  name: {
-    fontFamily: Font.display,
-    fontSize:   21,
-    fontWeight: '800',
-    color:      Colors.text,
-  },
-  email: {
-    fontSize:   12,
-    color:      Colors.text2,
-    marginTop:   3,
-    fontFamily: Font.bodyMd,
-  },
-  editLink: {
-    fontSize:   12,
-    color:      Colors.blue,
-    fontWeight: '700',
-    marginTop:   6,
-    fontFamily: Font.bodySm,
-  },
-
+  name:  { fontFamily: Font.display, fontSize: 21, fontWeight: '800', color: Colors.text },
+  email: { fontSize: 12, color: Colors.text2, marginTop: 3, fontFamily: Font.bodyMd },
   stats: {
     flexDirection:     'row',
     gap:               10,
@@ -233,7 +239,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     fontFamily:    Font.bodySm,
   },
-
   secLabel: {
     fontFamily:        Font.bodySm,
     fontSize:          12,
@@ -245,7 +250,6 @@ const styles = StyleSheet.create({
     paddingBottom:     6,
     textTransform:     'uppercase',
   },
-
   exRow: {
     flexDirection:     'row',
     alignItems:        'center',
@@ -255,7 +259,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  exEmoji: { fontSize: 18, width: 28, textAlign: 'center' },
   exInfo:  { flex: 1 },
   exName: {
     fontSize:   13,
@@ -266,7 +269,7 @@ const styles = StyleSheet.create({
   exDet: {
     fontSize:   11,
     color:      Colors.text2,
-    marginTop:   1,
+    marginTop:  1,
     fontFamily: Font.bodyMd,
   },
   exScore: {
@@ -274,7 +277,23 @@ const styles = StyleSheet.create({
     fontSize:   15,
     fontWeight: '800',
   },
-
+  guestNote: {
+    paddingHorizontal: 22,
+    paddingVertical:   12,
+    fontSize:          13,
+    color:             Colors.text3,
+    fontFamily:        Font.bodyMd,
+    lineHeight:        20,
+  },
+  errorRow: {
+    paddingHorizontal: 22,
+    paddingVertical:   12,
+  },
+  errorText: {
+    fontSize:   13,
+    color:      Colors.red,
+    fontFamily: Font.bodyMd,
+  },
   settingsBlock: {
     marginHorizontal: 22,
     backgroundColor:  Colors.surface,
@@ -285,15 +304,15 @@ const styles = StyleSheet.create({
     ...Shadow.sm,
   },
   settingRow: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    gap:            12,
-    paddingVertical: 12,
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               12,
+    paddingVertical:   12,
     paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  settingRowLast: { borderBottomWidth: 0 },
+  settingRowLast:     { borderBottomWidth: 0 },
   settingIcon: {
     width:           34,
     height:          34,
@@ -303,7 +322,6 @@ const styles = StyleSheet.create({
     borderColor:     Colors.border,
     alignItems:      'center',
     justifyContent:  'center',
-    fontSize:        15,
     flexShrink:      0,
   },
   settingIconDanger: {
