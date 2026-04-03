@@ -20,13 +20,13 @@ export default function SplashScreen() {
       <View style={styles.top}>
         <View style={styles.ring}>
           <View style={styles.ringInner}>
-            <Text style={styles.ringEmoji}>🏃</Text>
-          </View>
-        </View>
-        <Text style={styles.wordmark}>
+            <Text style={styles.wordmark}>
           Rep<Text style={styles.accent}>Right</Text>
         </Text>
         <Text style={styles.tagline}>TRAIN SMART · MOVE BETTER</Text>
+          </View>
+        </View>
+        
       </View>
 
       {/* Bottom — CTAs */}
@@ -76,9 +76,9 @@ const styles = StyleSheet.create({
     gap:            10,
   },
   ring: {
-    width:        80,
-    height:       80,
-    borderRadius: 40,
+    width:        280,
+    height:       280,
+    borderRadius: 200,
     borderWidth:  3,
     borderColor:  Colors.orangeLt,
     alignItems:   'center',
@@ -86,9 +86,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   ringInner: {
-    width:           56,
-    height:          56,
-    borderRadius:    28,
+    width:           256,
+    height:          256,
+    borderRadius:    200,
     backgroundColor: Colors.orangeLt,
     alignItems:      'center',
     justifyContent:  'center',

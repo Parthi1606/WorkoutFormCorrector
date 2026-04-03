@@ -105,7 +105,7 @@ const styles = StyleSheet.create({
   },
   searchIcon: {
     fontSize: 28,
-    color:    Colors.text2,
+    color:    Colors.orangeMid,
   },
 
   card: {

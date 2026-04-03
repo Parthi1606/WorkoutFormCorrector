@@ -87,12 +87,12 @@ export default function LoginScreen() {
           <View style={styles.divLine} />
         </View>
         <Button
-          label="Try Training Mode"
+          label="Use Guest Mode"
           onPress={() => router.replace('/workout')}
           variant="outline"
         />
         <Text style={styles.note}>
-          Training Mode doesn't save progress. Sign in for full features.
+          Guest Mode doesn't save progress. Sign in for full features.
         </Text>
       </View>
       <TouchableOpacity style={styles.back} onPress={() => router.back()}>

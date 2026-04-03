@@ -1,211 +1,210 @@
-// app/correct-form/[exercise].tsx
-// Pre-session briefing screen. Shows form tips for the selected exercise.
-// Navigates to /session/[exercise] on "Start Session".
+// app/session/[exercise].tsx
+// Live training session screen (solo / Training Mode).
+// Camera feed (raw, no pose overlay yet) + WebSocket form feedback.
+//
+// MediaPipe integration point: see hooks/useSession.ts
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView,
-  SafeAreaView, StatusBar, TouchableOpacity,
+  View, Text, StyleSheet, SafeAreaView,
+  StatusBar, TouchableOpacity, Dimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Colors, Radius, Font, Shadow } from '@/constants/theme';
-import { Button } from '@/components/ui/Button';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Colors, Font } from '@/constants/theme';
 import { EXERCISES, ExerciseKey } from '@/constants/exercises';
+import {
+  RepBubble, HoldBubble, ErrorOverlay, FormStrip, WsDot,
+} from '@/components/session/SessionOverlays';
+import { useSessionStore } from '@/store/sessionStore';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
-export default function CorrectFormScreen() {
-  const router = useRouter();
+const { height: SCREEN_H } = Dimensions.get('window');
+
+export default function SessionScreen() {
+  const router   = useRouter();
   const { exercise } = useLocalSearchParams<{ exercise: ExerciseKey }>();
   const ex = exercise ? EXERCISES[exercise] : null;
 
+  // Session state from Zustand
+  const phase       = useSessionStore((s) => s.phase);
+  const repCount    = useSessionStore((s) => s.rep_count);
+  const validReps   = useSessionStore((s) => s.valid_reps);
+  const checks      = useSessionStore((s) => s.checks);
+  const holdSeconds = useSessionStore((s) => s.hold_seconds);
+  const isConnected = useSessionStore((s) => s.isConnected);
+  const startSession  = useSessionStore((s) => s.startSession);
+  const resetSession  = useSessionStore((s) => s.resetSession);
+
+  // WebSocket
+  useWebSocket(exercise ?? null);
+
+  // Camera permission
+  const [permission, requestPermission] = useCameraPermissions();
+
+  // Init session
+  useEffect(() => {
+    if (exercise) startSession(exercise);
+    return () => resetSession();
+  }, [exercise]);
+
+  // Phase label shown in topbar
+  const phaseLabel = (() => {
+    switch (phase) {
+      case 'idle':      return '● Ready';
+      case 'moving':    return '● Moving ↓';
+      case 'top':       return '● Top ↑';
+      case 'lowering':  return '● Lowering ↓';
+      case 'hold':      return '● Hold';
+      default:          return '● Idle';
+    }
+  })();
+
   if (!ex) {
     return (
-      <SafeAreaView style={styles.root}>
-        <Text style={{ padding: 24, color: Colors.text }}>Exercise not found.</Text>
-      </SafeAreaView>
+      <View style={styles.root}>
+        <Text style={{ color: '#fff', padding: 24 }}>Exercise not found.</Text>
+      </View>
+    );
+  }
+
+  if (!permission) {
+    return <View style={styles.root} />;
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={[styles.root, { justifyContent: 'center', alignItems: 'center', gap: 16 }]}>
+        <Text style={styles.permText}>Camera access is needed for form detection.</Text>
+        <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
+          <Text style={styles.permBtnText}>Grant Access</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.camBg} />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Text style={styles.backArrow}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Before you start</Text>
-        <View style={{ width: 36 }} />
+      {/* Camera — takes 80% of screen height */}
+      <View style={styles.camArea}>
+
+        {/* Raw camera feed */}
+        <CameraView style={StyleSheet.absoluteFill} facing="front" />
+
+        {/* Top bar overlay */}
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.backArrow}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.titleBlock}>
+            <Text style={styles.camTitle}>{ex.name}</Text>
+            <Text style={styles.camPhase}>{phaseLabel}</Text>
+          </View>
+          <WsDot connected={isConnected} />
+        </View>
+
+        {/* Rep / hold counter */}
+        {ex.isHold
+          ? <HoldBubble seconds={holdSeconds ?? 0} />
+          : <RepBubble repCount={repCount} validReps={validReps} phase={phase} />
+        }
+
+        {/* Form fault pills (max 2) */}
+        <ErrorOverlay checks={checks} />
+
+        {/* TODO: MediaPipe skeleton overlay will render here */}
+        {/* When integrated, draw pose landmarks on a canvas/svg on top of the camera */}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-
-        {/* Exercise banner */}
-        <View style={styles.banner}>
-          <Text style={styles.bannerEmoji}>{ex.emoji}</Text>
-          <View>
-            <Text style={styles.bannerName}>{ex.name}</Text>
-            <Text style={styles.bannerSub}>{ex.category} · {ex.isHold ? 'Hold' : 'Rep-based'}</Text>
-          </View>
-        </View>
-
-        {/* Form tips */}
-        <Text style={styles.tipsTitle}>KEY FORM POINTS</Text>
-        {ex.formTips.map((tip, i) => (
-          <View key={i} style={styles.tipRow}>
-            <View style={styles.tipNum}>
-              <Text style={styles.tipNumText}>{i + 1}</Text>
-            </View>
-            <Text style={styles.tipText}>{tip}</Text>
-          </View>
-        ))}
-
-        {/* Camera positioning hint */}
-        <View style={styles.hint}>
-          <Text style={styles.hintIcon}>📷</Text>
-          <Text style={styles.hintText}>{ex.cameraHint}</Text>
-        </View>
-
-        {/* CTA */}
-        <View style={styles.cta}>
-          <Button
-            label="Start Session"
-            onPress={() => router.push(`/session/${ex.key}`)}
-            variant="primary"
-          />
-        </View>
-
-      </ScrollView>
-    </SafeAreaView>
+      {/* Form quality strip — bottom 20% */}
+      <FormStrip checks={checks} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root:   { flex: 1, backgroundColor: Colors.bg },
-  scroll: { paddingBottom: 40 },
+  root: {
+    flex:            1,
+    backgroundColor: Colors.camBg,
+  },
+  camArea: {
+    height:          SCREEN_H * 0.80,
+    backgroundColor: Colors.camSurface,
+    overflow:        'hidden',
+    position:        'relative',
+  },
 
-  header: {
-    flexDirection:     'row',
-    alignItems:        'center',
-    justifyContent:    'space-between',
-    paddingHorizontal: 22,
-    paddingVertical:   18,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+  topBar: {
+    position:       'absolute',
+    top:            0,
+    left:           0,
+    right:          0,
+    paddingHorizontal: 16,
+    paddingTop:     14,
+    paddingBottom:  12,
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    zIndex:         10,
+    // fade gradient
+    backgroundColor: 'rgba(0,0,0,0.0)',
   },
   backBtn: {
-    width:           36,
-    height:          36,
-    backgroundColor: Colors.surface,
-    borderRadius:    Radius.xs,
+    width:           34,
+    height:          34,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderRadius:    9,
     borderWidth:     1,
-    borderColor:     Colors.border,
+    borderColor:     'rgba(255,255,255,0.14)',
     alignItems:      'center',
     justifyContent:  'center',
-    ...Shadow.sm,
   },
   backArrow: {
-    fontSize:   20,
-    color:      Colors.text,
-    lineHeight: 22,
-    fontFamily: Font.display,
-  },
-  headerTitle: {
-    fontFamily: Font.display,
-    fontSize:   17,
-    fontWeight: '700',
-    color:      Colors.text,
-  },
-
-  banner: {
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             14,
-    margin:          18,
-    backgroundColor: Colors.orangeLt,
-    borderWidth:     1,
-    borderColor:     Colors.orangeMid,
-    borderRadius:    Radius.md,
-    padding:         18,
-  },
-  bannerEmoji: { fontSize: 38, lineHeight: 44 },
-  bannerName: {
-    fontFamily: Font.display,
-    fontSize:   20,
-    fontWeight: '800',
-    color:      Colors.orange,
-  },
-  bannerSub: {
-    fontSize:   12,
-    color:      Colors.text2,
-    marginTop:   3,
-    fontFamily: Font.bodyMd,
-  },
-
-  tipsTitle: {
-    fontFamily:        Font.bodySm,
-    fontSize:          12,
-    fontWeight:        '700',
-    color:             Colors.text2,
-    letterSpacing:     0.7,
-    paddingHorizontal: 22,
-    paddingBottom:     8,
-    paddingTop:        4,
-  },
-  tipRow: {
-    flexDirection:     'row',
-    alignItems:        'flex-start',
-    gap:               12,
-    paddingHorizontal: 22,
-    paddingVertical:    7,
-  },
-  tipNum: {
-    width:           24,
-    height:          24,
-    backgroundColor: Colors.blue,
-    borderRadius:    6,
-    alignItems:      'center',
-    justifyContent:  'center',
-    flexShrink:      0,
-    marginTop:       1,
-  },
-  tipNumText: {
-    fontSize:   11,
-    fontWeight: '800',
+    fontSize:   22,
     color:      '#fff',
+    lineHeight: 24,
     fontFamily: Font.display,
   },
-  tipText: {
-    flex:       1,
-    fontSize:   13,
-    color:      Colors.text2,
-    lineHeight: 20,
-    fontFamily: Font.bodyMd,
+  titleBlock: { alignItems: 'center' },
+  camTitle: {
+    fontFamily: Font.display,
+    fontSize:   15,
+    fontWeight: '700',
+    color:      '#fff',
+  },
+  camPhase: {
+    fontSize:      10,
+    color:         Colors.orange,
+    fontWeight:    '700',
+    letterSpacing: 0.8,
+    marginTop:     2,
+    fontFamily:    Font.bodySm,
+    textTransform: 'uppercase',
   },
 
-  hint: {
-    flexDirection:     'row',
-    alignItems:        'flex-start',
-    gap:               8,
-    margin:            22,
-    marginTop:         12,
-    backgroundColor:   Colors.blueLt,
-    borderWidth:       1,
-    borderColor:       Colors.blueMid,
-    borderRadius:      Radius.sm,
-    padding:           12,
-  },
-  hintIcon: { fontSize: 15, flexShrink: 0 },
-  hintText: {
-    flex:       1,
-    fontSize:   12,
-    color:      Colors.blueDk,
-    lineHeight: 18,
+  // Permissions
+  permText: {
+    color:      '#fff',
+    fontSize:   15,
     fontFamily: Font.bodyMd,
+    textAlign:  'center',
+    paddingHorizontal: 32,
   },
-
-  cta: {
-    paddingHorizontal: 22,
-    marginTop:         4,
+  permBtn: {
+    backgroundColor: Colors.orange,
+    paddingHorizontal: 28,
+    paddingVertical:   13,
+    borderRadius:      12,
+  },
+  permBtnText: {
+    color:      '#fff',
+    fontWeight: '700',
+    fontFamily: Font.display,
+    fontSize:   15,
   },
 });

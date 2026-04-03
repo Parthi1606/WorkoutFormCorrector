@@ -1,200 +1,237 @@
-// app/workout/[id].tsx  — Workout Detail screen
-import React from 'react';
+// app/session/workout/[id].tsx
+// Workout session screen — runs exercises in sequence from a WorkoutPlan.
+// Uses the same WebSocket + session infrastructure as the solo session.
+
+import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView,
-  SafeAreaView, StatusBar, TouchableOpacity,
+  View, Text, StyleSheet, TouchableOpacity, Dimensions, StatusBar,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { Colors, Radius, Font, Shadow } from '@/constants/theme';
-import { Button } from '@/components/ui/Button';
-import { Tag } from '@/components/ui/Tag';
-import { WORKOUT_PLANS, EXERCISES } from '@/constants/exercises';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Colors, Font } from '@/constants/theme';
+import { WORKOUT_PLANS, EXERCISES, ExerciseKey } from '@/constants/exercises';
+import {
+  RepBubble, HoldBubble, ErrorOverlay, WorkoutStrip, WsDot,
+} from '@/components/session/SessionOverlays';
+import { useSessionStore } from '@/store/sessionStore';
+import { useWebSocket } from '@/hooks/useWebSocket';
 
-export default function WorkoutDetailScreen() {
+const { height: SCREEN_H } = Dimensions.get('window');
+
+export default function WorkoutSessionScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const plan   = WORKOUT_PLANS.find((p) => p.id === id);
 
-  if (!plan) {
+  // Current position in the exercise queue
+  const [exIdx,   setExIdx]   = useState(0);
+  const [setNum,  setSetNum]  = useState(1);
+
+  const currentItem = plan?.exercises[exIdx];
+  const currentEx   = currentItem ? EXERCISES[currentItem.key] : null;
+
+  // Session state
+  const phase       = useSessionStore((s) => s.phase);
+  const repCount    = useSessionStore((s) => s.rep_count);
+  const validReps   = useSessionStore((s) => s.valid_reps);
+  const checks      = useSessionStore((s) => s.checks);
+  const holdSeconds = useSessionStore((s) => s.hold_seconds);
+  const isConnected = useSessionStore((s) => s.isConnected);
+  const startSession  = useSessionStore((s) => s.startSession);
+  const resetSession  = useSessionStore((s) => s.resetSession);
+
+  // WebSocket — reconnects whenever exercise changes
+  useWebSocket(currentItem?.key ?? null);
+
+  const [permission, requestPermission] = useCameraPermissions();
+
+  useEffect(() => {
+    if (currentItem) startSession(currentItem.key);
+    return () => { if (!currentItem) resetSession(); };
+  }, [exIdx]);
+
+  // Form score approximation (% of passing checks)
+  const formPct = checks.length > 0
+    ? Math.round((checks.filter((c) => c.ok).length / checks.length) * 100)
+    : 0;
+
+  const setLabel = currentItem
+    ? `Set ${setNum} / ${currentItem.sets}`
+    : '';
+
+  const phaseLabel = (() => {
+    switch (phase) {
+      case 'idle':     return '● Ready';
+      case 'moving':   return '● Moving ↓';
+      case 'top':      return '● Top ↑';
+      case 'lowering': return '● Lowering ↓';
+      case 'hold':     return '● Hold';
+      default:         return '● Idle';
+    }
+  })();
+
+  // ── Advance to next set / exercise ───────────────────────────────────────
+  const advanceSet = () => {
+    if (!plan || !currentItem) return;
+
+    if (setNum < currentItem.sets) {
+      setSetNum((n) => n + 1);
+      startSession(currentItem.key);
+    } else if (exIdx < plan.exercises.length - 1) {
+      setExIdx((i) => i + 1);
+      setSetNum(1);
+    } else {
+      // Workout complete
+      router.replace('/(tabs)/workout');
+    }
+  };
+
+  if (!plan || !currentEx || !currentItem) {
     return (
-      <SafeAreaView style={styles.root}>
-        <Text style={{ padding: 24, color: Colors.text }}>Workout not found.</Text>
-      </SafeAreaView>
+      <View style={styles.root}>
+        <Text style={{ color: '#fff', padding: 24 }}>Workout not found.</Text>
+      </View>
+    );
+  }
+
+  if (!permission?.granted) {
+    return (
+      <View style={[styles.root, { justifyContent: 'center', alignItems: 'center', gap: 16 }]}>
+        <Text style={styles.permText}>Camera access is needed for form detection.</Text>
+        <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
+          <Text style={styles.permBtnText}>Grant Access</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.camBg} />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Text style={styles.backArrow}>‹</Text>
-        </TouchableOpacity>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerName}>{plan.name}</Text>
-          <Text style={styles.headerMeta}>
-            {plan.exercises.length} exercises · ~{plan.duration} min · 2–3 sets each
-          </Text>
+      {/* Camera area — 80% height */}
+      <View style={styles.camArea}>
+        <CameraView style={StyleSheet.absoluteFill} facing="front" />
+
+        {/* Top bar */}
+        <View style={styles.topBar}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+            <Text style={styles.backArrow}>‹</Text>
+          </TouchableOpacity>
+          <View style={styles.titleBlock}>
+            <Text style={styles.camTitle}>
+              {plan.name} · {currentEx.name}
+            </Text>
+            <Text style={styles.camPhase}>{phaseLabel}</Text>
+          </View>
+          <WsDot connected={isConnected} />
         </View>
-        <Tag label={plan.tag} color={plan.tagColor} />
+
+        {/* Rep / hold counter */}
+        {currentEx.isHold
+          ? <HoldBubble seconds={holdSeconds ?? 0} />
+          : (
+            <RepBubble
+              repCount={repCount}
+              validReps={validReps}
+              phase={phase}
+              targetReps={currentItem.reps}
+              setLabel={setLabel}
+            />
+          )
+        }
+
+        {/* Error pills */}
+        <ErrorOverlay checks={checks} />
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
-
-        {/* Note */}
-        <View style={styles.note}>
-          <Text style={styles.noteText}>
-            Warm up before you start and cool down after. Rest 60 seconds between sets — hydration matters.
-          </Text>
-        </View>
-
-        {/* Exercise list */}
-        <View style={styles.list}>
-          {plan.exercises.map((item, i) => {
-            const ex = EXERCISES[item.key];
-            return (
-              <View key={item.key} style={styles.item}>
-                <View style={styles.itemNum}>
-                  <Text style={styles.itemNumText}>{i + 1}</Text>
-                </View>
-                <View style={styles.itemInfo}>
-                  <Text style={styles.itemName}>{ex.name}</Text>
-                  <Text style={styles.itemDet}>
-                    {ex.isHold
-                      ? `${item.reps}s · ${item.sets} sets`
-                      : `${item.reps} reps · ${item.sets} sets`
-                    }
-                  </Text>
-                </View>
-                <Text style={styles.itemEmoji}>{ex.emoji}</Text>
-              </View>
-            );
-          })}
-        </View>
-
-        {/* CTA */}
-        <View style={styles.cta}>
-          <Button
-            label="Begin Workout"
-            onPress={() => router.push(`/session/workout/${plan.id}`)}
-            variant="primary"
-          />
-        </View>
-
-      </ScrollView>
-    </SafeAreaView>
+      {/* Workout bottom strip */}
+      <WorkoutStrip
+        exerciseName={currentEx.name}
+        setLabel={setLabel}
+        repCount={repCount}
+        targetReps={currentItem.reps}
+        formPct={formPct}
+        onSkip={advanceSet}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root:   { flex: 1, backgroundColor: Colors.bg },
-  scroll: { paddingBottom: 40 },
-
-  header: {
-    flexDirection:     'row',
-    alignItems:        'center',
-    gap:               12,
-    paddingHorizontal: 22,
-    paddingVertical:   18,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+  root: {
+    flex:            1,
+    backgroundColor: Colors.camBg,
+  },
+  camArea: {
+    height:          SCREEN_H * 0.80,
+    backgroundColor: Colors.camSurface,
+    overflow:        'hidden',
+    position:        'relative',
+  },
+  topBar: {
+    position:       'absolute',
+    top:            0,
+    left:           0,
+    right:          0,
+    paddingHorizontal: 16,
+    paddingTop:     14,
+    paddingBottom:  12,
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'space-between',
+    zIndex:         10,
   },
   backBtn: {
-    width:           36,
-    height:          36,
-    backgroundColor: Colors.surface,
-    borderRadius:    Radius.xs,
+    width:           34,
+    height:          34,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderRadius:    9,
     borderWidth:     1,
-    borderColor:     Colors.border,
+    borderColor:     'rgba(255,255,255,0.14)',
     alignItems:      'center',
     justifyContent:  'center',
-    flexShrink:      0,
-    ...Shadow.sm,
   },
   backArrow: {
-    fontSize:   20,
-    color:      Colors.text,
-    lineHeight: 22,
+    fontSize:   22,
+    color:      '#fff',
+    lineHeight: 24,
     fontFamily: Font.display,
   },
-  headerInfo: { flex: 1 },
-  headerName: {
-    fontFamily: Font.display,
-    fontSize:   19,
-    fontWeight: '800',
-    color:      Colors.text,
+  titleBlock: { alignItems: 'center', flex: 1, paddingHorizontal: 8 },
+  camTitle: {
+    fontFamily:  Font.display,
+    fontSize:    14,
+    fontWeight:  '700',
+    color:       '#fff',
+    textAlign:   'center',
   },
-  headerMeta: {
-    fontSize:   12,
-    color:      Colors.text2,
-    marginTop:   3,
+  camPhase: {
+    fontSize:      10,
+    color:         Colors.orange,
+    fontWeight:    '700',
+    letterSpacing: 0.8,
+    marginTop:     2,
+    fontFamily:    Font.bodySm,
+    textTransform: 'uppercase',
+  },
+  permText: {
+    color:    '#fff',
+    fontSize: 15,
+    textAlign: 'center',
+    paddingHorizontal: 32,
     fontFamily: Font.bodyMd,
   },
-
-  note: {
-    margin:          14,
-    backgroundColor: Colors.blueLt,
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.blue,
-    borderRadius:    Radius.sm,
-    padding:         12,
+  permBtn: {
+    backgroundColor:  Colors.orange,
+    paddingHorizontal: 28,
+    paddingVertical:   13,
+    borderRadius:      12,
   },
-  noteText: {
-    fontSize:   12,
-    color:      Colors.blueDk,
-    lineHeight: 18,
-    fontFamily: Font.bodyMd,
-  },
-
-  list: {
-    paddingHorizontal: 22,
-    gap:               9,
-  },
-  item: {
-    backgroundColor: Colors.surface,
-    borderWidth:     1,
-    borderColor:     Colors.border,
-    borderRadius:    Radius.sm,
-    padding:         13,
-    flexDirection:   'row',
-    alignItems:      'center',
-    gap:             12,
-    ...Shadow.sm,
-  },
-  itemNum: {
-    width:           28,
-    height:          28,
-    backgroundColor: Colors.blueLt,
-    borderRadius:    7,
-    alignItems:      'center',
-    justifyContent:  'center',
-    flexShrink:      0,
-  },
-  itemNumText: {
-    fontFamily: Font.display,
-    fontSize:   13,
-    fontWeight: '800',
-    color:      Colors.blueDk,
-  },
-  itemInfo:  { flex: 1 },
-  itemName: {
-    fontSize:   14,
+  permBtnText: {
+    color:      '#fff',
     fontWeight: '700',
     fontFamily: Font.display,
-    color:      Colors.text,
-  },
-  itemDet: {
-    fontSize:   11,
-    color:      Colors.text2,
-    marginTop:   2,
-    fontFamily: Font.bodyMd,
-  },
-  itemEmoji: { fontSize: 18 },
-
-  cta: {
-    paddingHorizontal: 22,
-    marginTop:         18,
+    fontSize:   15,
   },
 });

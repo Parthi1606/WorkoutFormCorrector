@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 import { Colors, Radius, Font, Shadow } from '@/constants/theme';
 import { useAuthStore } from '@/store/authStore';
 import ScreenWrapper from '@/components/ui/ScreenWrapper';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 
 // Mock exercise breakdown — replace with real data from your API
 const EXERCISE_STATS = [
@@ -61,11 +62,7 @@ export default function ProfileScreen() {
           <View>
             <Text style={styles.name}>{displayName}</Text>
             <Text style={styles.email}>{displayEmail}</Text>
-            {user && (
-              <TouchableOpacity>
-                <Text style={styles.editLink}>Edit profile →</Text>
-              </TouchableOpacity>
-            )}
+          
           </View>
         </View>
 
@@ -89,7 +86,6 @@ export default function ProfileScreen() {
         <Text style={styles.secLabel}>EXERCISE BREAKDOWN</Text>
         {EXERCISE_STATS.map((ex) => (
           <View key={ex.name} style={styles.exRow}>
-            <Text style={styles.exEmoji}>{ex.emoji}</Text>
             <View style={styles.exInfo}>
               <Text style={styles.exName}>{ex.name}</Text>
               <Text style={styles.exDet}>{ex.detail}</Text>
@@ -105,32 +101,41 @@ export default function ProfileScreen() {
         <View style={styles.settingsBlock}>
 
           {/* Haptic toggle */}
-          <View style={styles.settingRow}>
-            <View style={styles.settingIcon}>
-              <Text>📳</Text>
-            </View>
-            <Text style={styles.settingLbl}>Haptic feedback</Text>
-            <Switch
-              value={haptic}
-              onValueChange={setHaptic}
-              trackColor={{ false: Colors.border, true: Colors.blue }}
-              thumbColor="#fff"
-            />
+        <View style={styles.settingRow}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="phone-portrait-outline" size={20} color="#555" />
           </View>
+          <Text style={styles.settingLbl}>Haptic feedback</Text>
+          <Switch
+            value={haptic}
+            onValueChange={setHaptic}
+            trackColor={{ false: Colors.border, true: Colors.blue }}
+            thumbColor="#fff"
+          />
+        </View>
 
-          {/* About */}
-          <TouchableOpacity style={styles.settingRow}>
-            <View style={styles.settingIcon}><Text>ℹ️</Text></View>
-            <Text style={styles.settingLbl}>About RepRight</Text>
-            <Text style={styles.settingChevron}>›</Text>
-          </TouchableOpacity>
+        {/* About */}
+        <TouchableOpacity style={styles.settingRow}>
+          <View style={styles.settingIcon}>
+            <Ionicons name="information-circle-outline" size={20} color="#555" />
+          </View>
+          <Text style={styles.settingLbl}>About RepRight</Text>
+          <Text style={styles.settingChevron}>›</Text>
+        </TouchableOpacity>
 
-          {/* Log out */}
-          <TouchableOpacity style={[styles.settingRow, styles.settingRowLast]} onPress={handleLogout}>
-            <View style={[styles.settingIcon, styles.settingIconDanger]}><Text>🚪</Text></View>
-            <Text style={[styles.settingLbl, styles.settingLblDanger]}>Log out</Text>
-            <Text style={styles.settingChevron}>›</Text>
-          </TouchableOpacity>
+        {/* Log out */}
+        <TouchableOpacity
+          style={[styles.settingRow, styles.settingRowLast]}
+          onPress={handleLogout}
+        >
+          <View style={[styles.settingIcon, styles.settingIconDanger]}>
+            <MaterialIcons name="logout" size={20} color="#d9534f" />
+          </View>
+          <Text style={[styles.settingLbl, styles.settingLblDanger]}>
+            Log out
+          </Text>
+          <Text style={styles.settingChevron}>›</Text>
+        </TouchableOpacity>
 
         </View>
 
