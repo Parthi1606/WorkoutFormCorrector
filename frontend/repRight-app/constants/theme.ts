@@ -71,3 +71,4 @@ export const Font = {
 } as const;
 
 export const WS_BASE = 'ws://192.168.1.18:8000';
+export const API_BASE = 'http://192.168.1.18:8001';

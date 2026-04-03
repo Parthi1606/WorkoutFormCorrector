@@ -1,7 +1,19 @@
 opencv-python
-mediapipe==0.10.9 #stable version (compatible with python 3.10.9)
+mediapipe==0.10.9
 numpy
 matplotlib
 pyttsx3
-fastapi 
+fastapi
 uvicorn
+
+# Database
+sqlalchemy
+psycopg2-binary
+
+# Auth
+PyJWT
+google-auth
+requests
+
+# API
+python-multipart
