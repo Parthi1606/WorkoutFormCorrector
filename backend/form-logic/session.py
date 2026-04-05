@@ -107,27 +107,56 @@ class Session:
                 if not check["ok"] and check.get("message"):
                     self._counter.record_fault(check["message"])
 
-            # Shoulder press uses a session baseline gate for lockout.
+            # ── Set rep_valid gates BEFORE calling update() ───────────────
+            # Each exercise that has end-of-rep validity gates overrides the
+            # default rep_valid here. update() is called exactly once below.
+
             if self.exercise_name == "shoulder_press":
                 rep_valid = self._baselines.get("hit_lockout", False)
 
+            if self.exercise_name == "bent_over_row":
+                rep_valid = self._baselines.get("hit_top", False)
+
+            if self.exercise_name == "pushup":
+                # Both gates must be tripped during the rep:
+                #   hit_depth : elbow ≤ 120° was reached (sufficient depth)
+                #   hit_top   : elbow ≥ 145° was reached (full extension)
+                rep_valid = (
+                    self._baselines.get("hit_depth", False)
+                    and self._baselines.get("hit_top", False)
+                )
+
+            # ── Single update() call ──────────────────────────────────────
             rep_event = self._counter.update(metric, rep_valid=rep_valid)
 
             if rep_event is not None:
                 faults = list(getattr(self._counter, "last_faults", []))
 
-                # Add shoulder-press-specific completion feedback.
                 if self.exercise_name == "shoulder_press" and not rep_valid:
                     if "extend fully overhead" not in faults:
                         faults.insert(0, "extend fully overhead")
+
+                if self.exercise_name == "bent_over_row" and not rep_valid:
+                    if "pull higher — wrist should reach hip level" not in faults:
+                        faults.insert(0, "pull higher — wrist should reach hip level")
+
+                if self.exercise_name == "pushup":
+                    if not self._baselines.get("hit_depth", False):
+                        if "lower a little more" not in faults:
+                            faults.insert(0, "lower a little more")
+                    if not self._baselines.get("hit_top", False):
+                        if "push all the way up" not in faults:
+                            faults.append("push all the way up")
 
                 if self.exercise_name == "lunge" and not rep_valid:
                     if not self._exercise._state.get("gate_return_passed", False):
                         if "step back to your starting position" not in faults:
                             faults.insert(0, "step back to your starting position")
 
+                print(f"[REP] event={rep_event} valid={rep_valid} faults={faults}")
+
                 self._trigger_audio(rep_event, faults)
-                self._baselines = {}  # reset per-rep baselines
+                self._baselines = {}
             else:
                 self._trigger_form_cues(checks)
 
@@ -157,11 +186,13 @@ class Session:
                 audio.say("watch your form", priority=True)
 
     def _trigger_form_cues(self, checks: list):
-        """
-        During a rep, speak the most important failing check.
-        Only one cue per frame — the first failing check wins.
-        """
-        for check in checks:
-            if not check["ok"] and check.get("message"):
-                audio.say(check["message"])
-                break
+        errors = [c for c in checks if not c["ok"] and c.get("message")]
+        if not errors:
+            return
+
+        priority = getattr(self._exercise, "ERROR_PRIORITY", None)
+        if priority:
+            errors.sort(key=lambda c: priority.index(c["message"]) 
+                        if c["message"] in priority else len(priority))
+
+        audio.say(errors[0]["message"])

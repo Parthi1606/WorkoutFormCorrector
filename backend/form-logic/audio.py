@@ -101,15 +101,12 @@ class AudioFeedback:
         This method is thread-safe and returns immediately.
         """
         with self._lock:
-            now       = time.time()
-            cooldown  = COOLDOWNS.get(message, DEFAULT_COOLDOWN)
+            now      = time.time()
+            cooldown = COOLDOWNS.get(message, DEFAULT_COOLDOWN)
             last_said = self._cooldowns.get(message, 0)
-
             if now - last_said < cooldown:
-                return  # still in cooldown, discard
-
-            self._cooldowns[message] = now
-
+                return  # still cooling down, discard
+        
         # PriorityQueue sorts by first tuple element (lower = higher priority)
         prio = 0 if priority else 1
         self._queue.put((prio, time.time(), message))
@@ -129,10 +126,15 @@ class AudioFeedback:
                 _prio, _ts, message = self._queue.get(timeout=0.5)
                 if message == "__STOP__":
                     break
+
+                # ← stamp cooldown HERE, when it's actually about to be spoken
+                with self._lock:
+                    self._cooldowns[message] = time.time()
+
                 engine.say(message)
                 engine.runAndWait()
             except queue.Empty:
-                continue    # no message yet, loop back and check stop_event
+                continue
             except Exception as e:
                 # Never crash the audio thread — just log and keep going
                 print(f"[audio] error: {e}")

@@ -1,9 +1,6 @@
 // app/session/[exercise].tsx
 // Live training session screen (solo / Training Mode).
-// Camera feed (raw, no pose overlay yet) + WebSocket form feedback.
-//
-// TEMPORARY: Mock frame sender added for WebSocket testing.
-// Remove sendMockFrame and the test button once WebSocket is confirmed working.
+// Vision Camera v4 + MediaPipe pose estimation + WebSocket form feedback.
 
 import React, { useEffect } from 'react';
 import {
@@ -11,7 +8,7 @@ import {
   StatusBar, TouchableOpacity, Dimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import { Colors, Font } from '@/constants/theme';
 import { EXERCISES, ExerciseKey } from '@/constants/exercises';
 import {
@@ -19,11 +16,12 @@ import {
 } from '@/components/session/SessionOverlays';
 import { useSessionStore } from '@/store/sessionStore';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { usePoseLandmarker } from '@/hooks/usePoseLandmarker';
 
 const { height: SCREEN_H } = Dimensions.get('window');
 
 export default function SessionScreen() {
-  const router   = useRouter();
+  const router      = useRouter();
   const { exercise } = useLocalSearchParams<{ exercise: ExerciseKey }>();
   const ex = exercise ? EXERCISES[exercise] : null;
 
@@ -37,11 +35,15 @@ export default function SessionScreen() {
   const startSession  = useSessionStore((s) => s.startSession);
   const resetSession  = useSessionStore((s) => s.resetSession);
 
-  // WebSocket + mock sender
+  // WebSocket
   const { sendLandmarks } = useWebSocket(exercise ?? null);
 
-  // Camera permission
-  const [permission, requestPermission] = useCameraPermissions();
+  // Vision Camera
+  const device = useCameraDevice('front');
+  const { hasPermission, requestPermission } = useCameraPermission();
+
+  // MediaPipe pose detection — pipes landmarks straight to WebSocket
+  const { frameProcessor } = usePoseLandmarker(sendLandmarks);
 
   // Init session
   useEffect(() => {
@@ -49,19 +51,7 @@ export default function SessionScreen() {
     return () => resetSession();
   }, [exercise]);
 
-  // ── TEMPORARY: mock frame for WebSocket testing ───────────────────
-  const sendMockFrame = () => {
-    const mockLandmarks = Array.from({ length: 33 }, () => ({
-      x:          Math.random(),
-      y:          Math.random(),
-      z:          Math.random() * -0.1,
-      visibility: 0.99,
-    }));
-    sendLandmarks(mockLandmarks);
-  };
-  // ─────────────────────────────────────────────────────────────────
-
-  // Phase label shown in topbar
+  // Phase label
   const phaseLabel = (() => {
     switch (phase) {
       case 'idle':     return '● Ready';
@@ -81,17 +71,21 @@ export default function SessionScreen() {
     );
   }
 
-  if (!permission) {
-    return <View style={styles.root} />;
-  }
-
-  if (!permission.granted) {
+  if (!hasPermission) {
     return (
       <View style={[styles.root, { justifyContent: 'center', alignItems: 'center', gap: 16 }]}>
         <Text style={styles.permText}>Camera access is needed for form detection.</Text>
         <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
           <Text style={styles.permBtnText}>Grant Access</Text>
         </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!device) {
+    return (
+      <View style={[styles.root, { justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={{ color: '#fff' }}>No front camera found.</Text>
       </View>
     );
   }
@@ -103,8 +97,14 @@ export default function SessionScreen() {
       {/* Camera — takes 80% of screen height */}
       <View style={styles.camArea}>
 
-        {/* Raw camera feed */}
-        <CameraView style={StyleSheet.absoluteFill} facing="front" />
+        {/* Vision Camera with frame processor */}
+        <Camera
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={true}
+          frameProcessor={frameProcessor}
+          pixelFormat="yuv"
+        />
 
         {/* Top bar overlay */}
         <View style={styles.topBar}>
@@ -127,20 +127,8 @@ export default function SessionScreen() {
           : <RepBubble repCount={repCount} validReps={validReps} phase={phase} />
         }
 
-        {/* Form fault pills (max 2) */}
+        {/* Form fault pills */}
         <ErrorOverlay checks={checks} />
-
-        {/* ── TEMPORARY: WebSocket test button ─────────────────────
-            Remove this block once WebSocket is confirmed working.  */}
-        {/* <TouchableOpacity
-          style={styles.testBtn}
-          onPress={sendMockFrame}
-        >
-          <Text style={styles.testBtnText}>
-            {isConnected ? '● Send Mock Frame' : '○ Not Connected'}
-          </Text>
-        </TouchableOpacity> */}
-        {/* ─────────────────────────────────────────────────────── */}
 
       </View>
 
@@ -207,27 +195,6 @@ const styles = StyleSheet.create({
     fontFamily:    Font.bodySm,
     textTransform: 'uppercase',
   },
-
-  // ── TEMPORARY test button styles ──────────────────────────────────
-  testBtn: {
-    position:        'absolute',
-    bottom:          20,
-    alignSelf:       'center',
-    backgroundColor: Colors.orange,
-    paddingHorizontal: 20,
-    paddingVertical:   10,
-    borderRadius:    10,
-    zIndex:          20,
-  },
-  testBtnText: {
-    color:      '#fff',
-    fontSize:   13,
-    fontWeight: '700',
-    fontFamily: Font.display,
-  },
-  // ─────────────────────────────────────────────────────────────────
-
-  // Permissions
   permText: {
     color:             '#fff',
     fontSize:          15,

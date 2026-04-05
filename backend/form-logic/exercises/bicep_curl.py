@@ -12,6 +12,15 @@ check_form()    : the form checking function called every frame
 
 from utils import lm, joint_angle, torso_angle, active_side as detect_side
 
+# Priority order — index 0 = most important cue to say first
+ERROR_PRIORITY = [
+    "keep your back straight",   # structural risk — always first
+    "elbow drifting",
+    "keep your shoulder down",
+    "level your shoulders",
+    "soft bend at the bottom — don't lock out",
+]
+
 # ─── Thresholds ───────────────────────────────────────────────────────────────
 
 THRESHOLDS = {

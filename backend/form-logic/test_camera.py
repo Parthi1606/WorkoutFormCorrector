@@ -19,7 +19,7 @@ pose = mp_pose.Pose()
 from audio import audio
 audio.start()
 
-EXERCISE = "plank"  # ✏️ Change this to test: squat, bicep_curl, lunge, pushup, plank, shoulder_press, bent_over_row
+EXERCISE = "pushup"  # ✏️ Change this to test: squat, bicep_curl, lunge, pushup, plank, shoulder_press, bent_over_row
 from session import Session
 session = Session(EXERCISE)
 

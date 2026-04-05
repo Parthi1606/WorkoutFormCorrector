@@ -31,6 +31,13 @@ class RepCounter:
     _faults: list = field(default_factory=list)
     last_faults: list = field(default_factory=list)
 
+    # FIX: track that we've seen the start position before allowing IDLE→MOVING.
+    # Without this, exercises where the resting position IS the start threshold
+    # (e.g. bent-over row: arm extended = elbow ~160°, start_threshold = 150)
+    # would never leave IDLE because _at_start() is True on the very first frame
+    # and the counter just sits there clearing faults forever.
+    _seen_start: bool = field(default=False, init=False)
+
     def _at_start(self, metric: float) -> bool:
         if self.direction == "down":
             return metric >= self.start_threshold
@@ -61,8 +68,21 @@ class RepCounter:
 
         if self.phase == Phase.IDLE:
             if self._at_start(metric):
+                # Confirmed we're at the start/rest position.
+                # Clear any stale faults from the previous rep.
                 self._faults = []
-            else:
+                self._seen_start = True
+            elif self._seen_start:
+                # Metric has now left the start zone — begin tracking the rep.
+                # FIX: previously there was no _seen_start gate here, so for
+                # direction="down" exercises (e.g. bent-over row) the counter
+                # would skip straight to MOVING on the very first frame without
+                # ever confirming the arm was actually extended at the start.
+                # For direction="up" exercises (e.g. shoulder press) the resting
+                # elbow angle is already above start_threshold so _at_start was
+                # False on frame 1, which accidentally worked. The gate makes
+                # both directions behave correctly and symmetrically.
+                self._seen_start = False
                 self.phase = Phase.MOVING
 
         elif self.phase == Phase.MOVING:
@@ -91,6 +111,8 @@ class RepCounter:
         self.last_faults = list(self._faults)
         self._faults = []
         self.phase = Phase.IDLE
+        # Reset so the next rep also requires a confirmed start position.
+        self._seen_start = False
         return result
 
     @property
