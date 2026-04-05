@@ -44,6 +44,8 @@ import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
+from starlette.websockets import WebSocketState
 
 from audio import audio
 from session import Session
@@ -62,9 +64,10 @@ app = FastAPI(title="Pose Feedback API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],    # tighten this to your React Native origin in production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
 
@@ -110,7 +113,7 @@ def _parse_landmarks(raw: list) -> list:
 # ─── WebSocket endpoint ───────────────────────────────────────────────────────
 
 @app.websocket("/session/{exercise_name}")
-async def exercise_session(websocket: WebSocket, exercise_name: str):
+async def exercise_session(websocket: WebSocket,exercise_name: str,):
     """
     One WebSocket connection = one user's exercise session.
 
@@ -122,6 +125,7 @@ async def exercise_session(websocket: WebSocket, exercise_name: str):
     If the exercise_name is invalid the connection is immediately closed
     with a 4000 code and an error message.
     """
+    
     await websocket.accept()
     log.info(f"Connection opened — exercise: {exercise_name}")
 

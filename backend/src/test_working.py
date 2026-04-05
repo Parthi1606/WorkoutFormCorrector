@@ -21,7 +21,7 @@ if not cap.isOpened():
     exit()
 
 print("✓ Camera opened")
-print("Press 'q' to quit")
+print("Press Ctrl + C to quit")
 
 while True:
     ret, frame = cap.read()

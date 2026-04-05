@@ -1,49 +1,91 @@
 from utils import lm, joint_angle, torso_angle, midpoint
 import numpy as np
 
-# ─── Thresholds (FORGIVING VERSION) ──────────────────────────────────────────
+# ─── Notes ────────────────────────────────────────────────────────────────────
+#
+#   User faces SIDEWAYS to the camera.
+#   This means:
+#     - We rely on ONE visible side (left or right) for most checks
+#     - Knee cave / valgus checks are NOT possible (lateral view)
+#     - Knee-over-toe, torso lean, depth are all highly reliable from this angle
+#     - We auto-detect which side is facing the camera (visible side)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─── Thresholds ──────────────────────────────────────────────────────────────
 
 THRESHOLDS = {
-    "torso_start_max":         20.0,
-    "hip_shoulder_offset_max": 0.12,
-    "knee_hyperextend_min":    178.0,
+    # Standing
+    "knee_hyperextend_min":    178.0,   # above this = locked knees
 
-    "torso_descent_max":       55.0,
-    "knee_forward_max":        0.28,
-    "heel_lift_max":           0.05,
-    "hip_drop_max":            0.10,
-    "knee_before_hip_max":     0.05,
+    # Descent
+    "torso_descent_max":       55.0,    # max torso lean during descent
+    "torso_bottom_max":        65.0,    # more lean allowed at the very bottom
+    "knee_forward_max":        0.10,    # knee x past ankle x (normalized) — tighter from side view
+    "heel_lift_max":           0.015,   # ankle y movement = heel lift (stricter from side)
+    "hip_drop_max":            0.12,    # max hip drop per frame (speed of descent)
 
-    "hip_depth_max":           125.0,   # angle-based depth
+    # Depth
+    "hip_depth_max":           125.0,   # hip angle at or below = at depth
+    "near_bottom_knee":        115.0,   # knee angle below this = near bottom, check depth
 
-    "torso_bottom_max":        60.0,
-    "bounce_velocity_max":     0.06,
+    # Ascent
+    "hip_rise_max":            0.12,    # max hip rise per frame (speed of ascent)
+    "hip_shoulder_sync_max":   0.06,    # hips and shoulders should rise together
 
-    "hip_shoulder_sync_max":   0.06,
-    "hip_rise_max":            0.10,
+    # Bounce
+    "bounce_velocity_max":     0.05,    # sudden upward hip movement at bottom
 
-    "torso_finish_max":        20.0,
-    "hip_return_tolerance":    0.05,
+    # Finish
+    "torso_finish_max":        15.0,    # must be upright when standing
+    "hip_return_tolerance":    0.04,    # how close hip_y must be to start to count as "standing"
+
+    # Side detection
+    "side_visibility_min":     0.6,     # landmark visibility threshold
 }
 
-# ─── Rep Counter ─────────────────────────────────────────────────────────────
+# ─── Rep Counter Config ───────────────────────────────────────────────────────
 
 COUNTER_CONFIG = {
-    "start_threshold": 175.0,
-    "end_threshold":    90.0,
+    "start_threshold": 170.0,   # knee angle = standing
+    "end_threshold":    95.0,   # knee angle = at bottom
     "direction":       "down",
 }
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _check(label, passed, value, message):
+def _check(label, passed, value, message, priority=1):
+    """
+    priority: 1 = high (safety/form), 2 = medium, 3 = low (polish)
+    Lower number = shown first to beginner.
+    """
     return {
-        "label": label,
-        "ok": passed,
-        "value": round(value, 3),
-        "message": "" if passed else message,
+        "label":    label,
+        "ok":       passed,
+        "value":    round(float(value), 3),
+        "message":  "" if passed else message,
+        "priority": priority,
     }
+
+
+def _detect_side(landmarks):
+    """
+    Returns 'LEFT' or 'RIGHT' — whichever side is more visible to the camera.
+    When user stands sideways, one side faces the camera and has higher visibility scores.
+    """
+    l_vis = (
+        lm(landmarks, "LEFT_HIP").visibility +
+        lm(landmarks, "LEFT_KNEE").visibility +
+        lm(landmarks, "LEFT_ANKLE").visibility
+    )
+    r_vis = (
+        lm(landmarks, "RIGHT_HIP").visibility +
+        lm(landmarks, "RIGHT_KNEE").visibility +
+        lm(landmarks, "RIGHT_ANKLE").visibility
+    )
+    return "LEFT" if l_vis >= r_vis else "RIGHT"
 
 
 def _knee_angle(landmarks, side):
@@ -53,145 +95,199 @@ def _knee_angle(landmarks, side):
     return joint_angle(hip, knee, ankle)
 
 
-def _avg_knee_angle(landmarks):
-    return (_knee_angle(landmarks, "LEFT") + _knee_angle(landmarks, "RIGHT")) / 2
+def _hip_angle(landmarks, side):
+    shoulder = lm(landmarks, f"{side}_SHOULDER")
+    hip      = lm(landmarks, f"{side}_HIP")
+    knee     = lm(landmarks, f"{side}_KNEE")
+    return joint_angle(shoulder, hip, knee)
+
+
+# ─── Phase Tracker ───────────────────────────────────────────────────────────
+
+def _get_phase(knee_angle, prev_phase):
+    """
+    Derive squat phase from knee angle and previous phase.
+    Phases: standing → descending → bottom → ascending → standing
+    """
+    if knee_angle >= COUNTER_CONFIG["start_threshold"]:
+        return "standing"
+    elif knee_angle <= COUNTER_CONFIG["end_threshold"]:
+        return "bottom"
+    elif prev_phase in ("standing", "descending"):
+        return "descending"
+    else:
+        return "ascending"
 
 
 # ─── Main Logic ──────────────────────────────────────────────────────────────
 
 def check_form(landmarks, baselines):
 
-    # ── Landmarks ────────────────────────────────────────────────────
-    ls = lm(landmarks, "LEFT_SHOULDER")
-    rs = lm(landmarks, "RIGHT_SHOULDER")
-    lh = lm(landmarks, "LEFT_HIP")
-    rh = lm(landmarks, "RIGHT_HIP")
-    lk = lm(landmarks, "LEFT_KNEE")
-    rk = lm(landmarks, "RIGHT_KNEE")
-    la = lm(landmarks, "LEFT_ANKLE")
-    ra = lm(landmarks, "RIGHT_ANKLE")
+    # ── Detect which side faces camera ───────────────────────────────
+    side = _detect_side(landmarks)
+    opp  = "RIGHT" if side == "LEFT" else "LEFT"
 
-    shoulder_mid = midpoint(ls, rs)
-    hip_mid      = midpoint(lh, rh)
-    knee_mid     = midpoint(lk, rk)
-    ankle_mid    = midpoint(la, ra)
+    # ── Key landmarks (visible/facing side) ──────────────────────────
+    shoulder = lm(landmarks, f"{side}_SHOULDER")
+    hip      = lm(landmarks, f"{side}_HIP")
+    knee     = lm(landmarks, f"{side}_KNEE")
+    ankle    = lm(landmarks, f"{side}_ANKLE")
 
-    # ── Baselines ─────────────────────────────────────────────
-    if not baselines:
-        baselines["hip_y_start"]  = hip_mid[1]
-        baselines["hip_y_prev"]   = hip_mid[1]
-        baselines["knee_x_prev"]  = knee_mid[0]
-        baselines["ankle_y_prev"] = ankle_mid[1]
-        baselines["at_depth"]     = False
-
-    # ── Core Metrics ──────────────────────────────────────────
+    # ── Core angles ──────────────────────────────────────────────────
+    knee_ang = _knee_angle(landmarks, side)
+    hip_ang  = _hip_angle(landmarks, side)
     t_angle  = torso_angle(landmarks)
-    avg_knee = _avg_knee_angle(landmarks)
 
-    # 🔥 Hip angle for depth
-    hip_angle_l = joint_angle(ls, lh, lk)
-    hip_angle_r = joint_angle(rs, rh, rk)
-    hip_angle   = (hip_angle_l + hip_angle_r) / 2
+    # ── Phase ────────────────────────────────────────────────────────
+    prev_phase = baselines.get("phase", "standing")
+    phase      = _get_phase(knee_ang, prev_phase)
 
-    hip_at_depth = hip_angle <= THRESHOLDS["hip_depth_max"]
+    # ── Initialise baselines on first frame ──────────────────────────
+    if "hip_y_start" not in baselines:
+        baselines["hip_y_start"]      = hip.y
+        baselines["hip_y_prev"]       = hip.y
+        baselines["ankle_y_prev"]     = ankle.y
+        baselines["shoulder_y_prev"]  = shoulder.y
+        baselines["at_depth"]         = False
+        baselines["phase"]            = "standing"
 
-    # 🔥 NEW: Only check depth near bottom
-    near_bottom = avg_knee <= 110  # tweak if needed
+    # ── Per-frame deltas ─────────────────────────────────────────────
+    hip_y_delta      = hip.y       - baselines["hip_y_prev"]        # +ve = moving down
+    ankle_y_delta    = abs(ankle.y - baselines["ankle_y_prev"])     # any ankle movement
+    shoulder_y_delta = abs(shoulder.y - baselines["shoulder_y_prev"])
 
-    # Default: don't complain about depth
-    depth_ok = True
-    if near_bottom:
-        depth_ok = hip_at_depth
-
-    # ── Other Metrics ─────────────────────────────────────────
-    hip_shoulder_offset = abs(shoulder_mid[0] - hip_mid[0])
-    knee_forward        = max(lk.x - la.x, rk.x - ra.x)
-
-    hip_y_delta   = hip_mid[1] - baselines["hip_y_prev"]
-    knee_x_delta  = abs(knee_mid[0] - baselines["knee_x_prev"])
-    ankle_y_delta = abs(ankle_mid[1] - baselines["ankle_y_prev"])
-
-    shoulder_y_prev = baselines.get("shoulder_y_prev", shoulder_mid[1])
-    hip_vel        = abs(hip_y_delta)
-    shoulder_vel   = abs(shoulder_mid[1] - shoulder_y_prev)
-    sync_diff      = abs(hip_vel - shoulder_vel)
-
-    # Bounce detection
-    if hip_at_depth:
+    # ── Depth tracking ───────────────────────────────────────────────
+    at_depth = hip_ang <= THRESHOLDS["hip_depth_max"]
+    if at_depth:
         baselines["at_depth"] = True
 
+    # Reset at_depth latch when fully standing again — fixes bounce bug
+    if phase == "standing" and baselines.get("at_depth"):
+        baselines["at_depth"] = False
+
+    near_bottom = knee_ang <= THRESHOLDS["near_bottom_knee"]
+
+    # ── Knee-over-toe (reliable from side view) ───────────────────────
+    # Positive = knee x is ahead of ankle x (too far forward)
+    knee_forward = knee.x - ankle.x
+    # Note: if user faces LEFT, knee moving right = forward. Vice versa.
+    # Flip sign for right-facing user so positive always means "too far forward"
+    if side == "RIGHT":
+        knee_forward = ankle.x - knee.x
+
+    # ── Sync check (hips and shoulders rise together on ascent) ──────
+    hip_vel       = abs(hip_y_delta)
+    shoulder_vel  = shoulder_y_delta
+    sync_diff     = abs(hip_vel - shoulder_vel)
+
+    # ── Bounce detection ─────────────────────────────────────────────
+    # Bounce = sudden upward snap from bottom before completing the rep
     bounce = (
         baselines["at_depth"]
-        and hip_y_delta < -THRESHOLDS["bounce_velocity_max"]
-        and avg_knee > COUNTER_CONFIG["end_threshold"] + 5
+        and hip_y_delta < -THRESHOLDS["bounce_velocity_max"]  # sudden upward
+        and knee_ang > COUNTER_CONFIG["end_threshold"] + 10   # not fully at bottom
     )
 
-    hip_returned = abs(hip_mid[1] - baselines["hip_y_start"]) <= THRESHOLDS["hip_return_tolerance"]
+    # ── Has the user returned to standing? ───────────────────────────
+    hip_returned = abs(hip.y - baselines["hip_y_start"]) <= THRESHOLDS["hip_return_tolerance"]
 
-    # ── Update baselines ─────────────────────────────────────
-    baselines["hip_y_prev"]      = hip_mid[1]
-    baselines["knee_x_prev"]     = knee_mid[0]
-    baselines["ankle_y_prev"]    = ankle_mid[1]
-    baselines["shoulder_y_prev"] = shoulder_mid[1]
+    # ── Update baselines ─────────────────────────────────────────────
+    baselines["hip_y_prev"]      = hip.y
+    baselines["ankle_y_prev"]    = ankle.y
+    baselines["shoulder_y_prev"] = shoulder.y
+    baselines["phase"]           = phase
 
-    # ── Checks ────────────────────────────────────────────────
+    # ─── Checks ───────────────────────────────────────────────────────
+    #
+    #   Checks are phase-aware:
+    #     - Some only make sense during descent, some only at bottom, etc.
+    #     - When a check is not relevant for the current phase, it passes silently.
+    #   Priority 1 = most important for beginners (shown first)
+    #
+    # ─────────────────────────────────────────────────────────────────
+
     checks = [
 
-        _check("Torso control",
-               t_angle <= THRESHOLDS["torso_descent_max"],
-               t_angle,
-               "keep your chest up"),
-
-        _check("Torso alignment",
-               hip_shoulder_offset <= THRESHOLDS["hip_shoulder_offset_max"],
-               hip_shoulder_offset,
-               "don't lean too far forward"),
+        # ── Always active ────────────────────────────────────────────
 
         _check("Knees soft",
-               avg_knee < THRESHOLDS["knee_hyperextend_min"],
-               avg_knee,
-               "don't lock your knees"),
-
-        _check("Controlled descent",
-               hip_y_delta <= THRESHOLDS["hip_drop_max"],
-               hip_y_delta,
-               "control your descent"),
-
-        _check("Hip initiation",
-               knee_x_delta <= THRESHOLDS["knee_before_hip_max"],
-               knee_x_delta,
-               "start by pushing hips back"),
-
-        _check("Knee position",
-               knee_forward <= THRESHOLDS["knee_forward_max"],
-               knee_forward,
-               "knees too far forward"),
+               knee_ang < THRESHOLDS["knee_hyperextend_min"],
+               knee_ang,
+               "don't lock your knees",
+               priority=1),
 
         _check("Heels grounded",
                ankle_y_delta <= THRESHOLDS["heel_lift_max"],
                ankle_y_delta,
-               "keep your heels down"),
+               "keep your heels on the ground",
+               priority=1),
 
-        # 🔥 FIXED DEPTH CHECK
+        # ── Descent + bottom ────────────────────────────────────────
+
+        _check("Chest up",
+               phase not in ("descending", "bottom") or t_angle <= THRESHOLDS["torso_descent_max"],
+               t_angle,
+               "keep your chest up, don't lean forward",
+               priority=1),
+
+        _check("Knee position",
+               phase not in ("descending", "bottom") or knee_forward <= THRESHOLDS["knee_forward_max"],
+               knee_forward,
+               "knees too far forward — push hips back more",
+               priority=1),
+
+        _check("Controlled descent",
+               phase != "descending" or hip_y_delta <= THRESHOLDS["hip_drop_max"],
+               hip_y_delta,
+               "slow down — control your descent",
+               priority=2),
+
+        # ── Bottom only ──────────────────────────────────────────────
+
         _check("Depth",
-               depth_ok,
-               hip_angle,
-               "squat deeper"),
+               not near_bottom or at_depth,
+               hip_ang,
+               "squat a little deeper — aim for thighs parallel to floor",
+               priority=2),
 
         _check("No bounce",
                not bounce,
                hip_y_delta,
-               "don't bounce at bottom"),
+               "don't bounce at the bottom — pause briefly",
+               priority=1),
 
-        _check("Smooth ascent",
-               abs(hip_y_delta) <= THRESHOLDS["hip_rise_max"] or hip_y_delta >= 0,
-               hip_y_delta,
-               "control your ascent"),
+        # ── Ascent only ──────────────────────────────────────────────
 
-        _check("Full stand",
-               t_angle <= THRESHOLDS["torso_finish_max"] or not hip_returned,
+        _check("Chest up on way up",
+               phase != "ascending" or t_angle <= THRESHOLDS["torso_descent_max"],
                t_angle,
-               "stand fully upright"),
+               "chest is dropping — drive through your heels and keep chest up",
+               priority=1),
+
+        _check("Hips and shoulders together",
+               phase != "ascending" or sync_diff <= THRESHOLDS["hip_shoulder_sync_max"],
+               sync_diff,
+               "hips rising faster than shoulders — don't good-morning the squat",
+               priority=2),
+
+        _check("Controlled ascent",
+               phase != "ascending" or abs(hip_y_delta) <= THRESHOLDS["hip_rise_max"],
+               abs(hip_y_delta),
+               "slow down — control your ascent",
+               priority=3),
+
+        # ── Finish ───────────────────────────────────────────────────
+
+        # Only fires when the person has actually returned to standing
+        _check("Stand fully upright",
+               not hip_returned or t_angle <= THRESHOLDS["torso_finish_max"],
+               t_angle,
+               "stand up straight at the top",
+               priority=2),
+
     ]
 
-    return checks, avg_knee, "BOTH"
+    # Sort by priority so the most important failing check surfaces first
+    checks.sort(key=lambda c: (c["ok"], c["priority"]))
+
+    return checks, knee_ang, side

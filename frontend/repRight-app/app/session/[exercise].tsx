@@ -2,9 +2,10 @@
 // Live training session screen (solo / Training Mode).
 // Camera feed (raw, no pose overlay yet) + WebSocket form feedback.
 //
-// MediaPipe integration point: see hooks/useSession.ts
+// TEMPORARY: Mock frame sender added for WebSocket testing.
+// Remove sendMockFrame and the test button once WebSocket is confirmed working.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
   View, Text, StyleSheet, SafeAreaView,
   StatusBar, TouchableOpacity, Dimensions,
@@ -36,8 +37,8 @@ export default function SessionScreen() {
   const startSession  = useSessionStore((s) => s.startSession);
   const resetSession  = useSessionStore((s) => s.resetSession);
 
-  // WebSocket
-  useWebSocket(exercise ?? null);
+  // WebSocket + mock sender
+  const { sendLandmarks } = useWebSocket(exercise ?? null);
 
   // Camera permission
   const [permission, requestPermission] = useCameraPermissions();
@@ -48,15 +49,27 @@ export default function SessionScreen() {
     return () => resetSession();
   }, [exercise]);
 
+  // ── TEMPORARY: mock frame for WebSocket testing ───────────────────
+  const sendMockFrame = () => {
+    const mockLandmarks = Array.from({ length: 33 }, () => ({
+      x:          Math.random(),
+      y:          Math.random(),
+      z:          Math.random() * -0.1,
+      visibility: 0.99,
+    }));
+    sendLandmarks(mockLandmarks);
+  };
+  // ─────────────────────────────────────────────────────────────────
+
   // Phase label shown in topbar
   const phaseLabel = (() => {
     switch (phase) {
-      case 'idle':      return '● Ready';
-      case 'moving':    return '● Moving ↓';
-      case 'top':       return '● Top ↑';
-      case 'lowering':  return '● Lowering ↓';
-      case 'hold':      return '● Hold';
-      default:          return '● Idle';
+      case 'idle':     return '● Ready';
+      case 'moving':   return '● Moving ↓';
+      case 'top':      return '● Top ↑';
+      case 'lowering': return '● Lowering ↓';
+      case 'hold':     return '● Hold';
+      default:         return '● Idle';
     }
   })();
 
@@ -117,8 +130,18 @@ export default function SessionScreen() {
         {/* Form fault pills (max 2) */}
         <ErrorOverlay checks={checks} />
 
-        {/* TODO: MediaPipe skeleton overlay will render here */}
-        {/* When integrated, draw pose landmarks on a canvas/svg on top of the camera */}
+        {/* ── TEMPORARY: WebSocket test button ─────────────────────
+            Remove this block once WebSocket is confirmed working.  */}
+        {/* <TouchableOpacity
+          style={styles.testBtn}
+          onPress={sendMockFrame}
+        >
+          <Text style={styles.testBtnText}>
+            {isConnected ? '● Send Mock Frame' : '○ Not Connected'}
+          </Text>
+        </TouchableOpacity> */}
+        {/* ─────────────────────────────────────────────────────── */}
+
       </View>
 
       {/* Form quality strip — bottom 20% */}
@@ -138,21 +161,19 @@ const styles = StyleSheet.create({
     overflow:        'hidden',
     position:        'relative',
   },
-
   topBar: {
-    position:       'absolute',
-    top:            0,
-    left:           0,
-    right:          0,
+    position:          'absolute',
+    top:               0,
+    left:              0,
+    right:             0,
     paddingHorizontal: 16,
-    paddingTop:     14,
-    paddingBottom:  12,
-    flexDirection:  'row',
-    alignItems:     'center',
-    justifyContent: 'space-between',
-    zIndex:         10,
-    // fade gradient
-    backgroundColor: 'rgba(0,0,0,0.0)',
+    paddingTop:        14,
+    paddingBottom:     12,
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
+    zIndex:            10,
+    backgroundColor:   'rgba(0,0,0,0.0)',
   },
   backBtn: {
     width:           34,
@@ -187,16 +208,35 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 
+  // ── TEMPORARY test button styles ──────────────────────────────────
+  testBtn: {
+    position:        'absolute',
+    bottom:          20,
+    alignSelf:       'center',
+    backgroundColor: Colors.orange,
+    paddingHorizontal: 20,
+    paddingVertical:   10,
+    borderRadius:    10,
+    zIndex:          20,
+  },
+  testBtnText: {
+    color:      '#fff',
+    fontSize:   13,
+    fontWeight: '700',
+    fontFamily: Font.display,
+  },
+  // ─────────────────────────────────────────────────────────────────
+
   // Permissions
   permText: {
-    color:      '#fff',
-    fontSize:   15,
-    fontFamily: Font.bodyMd,
-    textAlign:  'center',
+    color:             '#fff',
+    fontSize:          15,
+    fontFamily:        Font.bodyMd,
+    textAlign:         'center',
     paddingHorizontal: 32,
   },
   permBtn: {
-    backgroundColor: Colors.orange,
+    backgroundColor:   Colors.orange,
     paddingHorizontal: 28,
     paddingVertical:   13,
     borderRadius:      12,

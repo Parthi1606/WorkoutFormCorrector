@@ -13,18 +13,6 @@ It does NOT hold:
   - The WebSocket connection itself (that stays in server.py)
   - The audio engine (that's a singleton in audio.py)
   - Any MediaPipe state (pose estimation runs on the phone)
-
-Processing one frame
---------------------
-server.py receives a JSON frame, parses the landmarks, and calls:
-
-    result = session.process(landmarks)
-
-session.process() does three things:
-  1. Runs check_form() from the active exercise module
-  2. Feeds any faults into the rep counter
-  3. Checks if a rep just completed and triggers audio
-  4. Returns a dict that gets sent back to the phone as JSON
 """
 
 import time
@@ -32,13 +20,9 @@ import importlib
 from dataclasses import dataclass, field
 from typing import Optional
 
-from rep_counter import RepCounter, Phase
+from rep_counter import RepCounter
 from audio import audio
 
-
-# ─── Registry ────────────────────────────────────────────────────────────────
-# Maps the exercise name (from the WebSocket URL) to its module.
-# Add a new exercise by dropping a file in exercises/ and adding it here.
 
 EXERCISE_REGISTRY = {
     "bicep_curl":     "exercises.bicep_curl",
@@ -53,30 +37,14 @@ EXERCISE_REGISTRY = {
 
 @dataclass
 class Session:
-    """
-    Holds all mutable state for one user's exercise session.
-
-    Parameters
-    ----------
-    exercise_name : str
-        Must be a key in EXERCISE_REGISTRY.
-
-    Raises
-    ------
-    ValueError if exercise_name is not registered.
-    """
+    """Holds all mutable state for one user's exercise session."""
     exercise_name: str
 
-    # Set during __post_init__
-    _exercise:    object       = field(init=False)
-    _counter:     Optional[RepCounter] = field(init=False, default=None)
-    _is_hold:     bool         = field(init=False, default=False)
-    _hold_start:  Optional[float] = field(init=False, default=None)
-
-    # Baselines captured at the start of each rep (reset after each rep)
-    _baselines:   dict         = field(init=False, default_factory=dict)
-
-    # Tracks active side for unilateral exercises
+    _exercise: object = field(init=False)
+    _counter: Optional[RepCounter] = field(init=False, default=None)
+    _is_hold: bool = field(init=False, default=False)
+    _hold_start: Optional[float] = field(init=False, default=None)
+    _baselines: dict = field(init=False, default_factory=dict)
     _active_side: Optional[str] = field(init=False, default=None)
 
     def __post_init__(self):
@@ -86,99 +54,91 @@ class Session:
                 f"Valid options: {list(EXERCISE_REGISTRY.keys())}"
             )
 
-        # Dynamically import the exercise module
-        module_path      = EXERCISE_REGISTRY[self.exercise_name]
-        self._exercise   = importlib.import_module(module_path)
-
-        # Check if this exercise uses hold-timing instead of rep counting
+        module_path = EXERCISE_REGISTRY[self.exercise_name]
+        self._exercise = importlib.import_module(module_path)
         self._is_hold = getattr(self._exercise, "IS_HOLD", False)
 
         if not self._is_hold:
             cfg = self._exercise.COUNTER_CONFIG
             self._counter = RepCounter(
-                start_threshold = cfg["start_threshold"],
-                end_threshold   = cfg["end_threshold"],
-                direction       = cfg["direction"],
+                start_threshold=cfg["start_threshold"],
+                end_threshold=cfg["end_threshold"],
+                direction=cfg["direction"],
             )
 
     def process(self, landmarks: list) -> dict:
-        """
-        Process one frame of landmark data.
+        """Process one frame of landmark data."""
 
-        Parameters
-        ----------
-        landmarks : list
-            The 33-item list of landmark objects from MediaPipe.
-            Each item has .x, .y, .z, .visibility attributes.
-
-        Returns
-        -------
-        dict with keys:
-            phase       : str   — current phase (idle / moving / top / lowering / hold)
-            rep_count   : int
-            valid_reps  : int
-            hold_seconds: float — only present for hold exercises
-            active_side : str | None — "LEFT" or "RIGHT" for unilateral
-            checks      : list of {label, ok, message}
-            rep_event   : str | None — "valid" | "invalid" | None
-            faults      : list of str — fault messages from last completed rep
-        """
-
-        # ── 1. Run form checks ────────────────────────────────────────
-        checks, metric, active_side = self._exercise.check_form(
+        # 1) Run exercise form checks.
+        result = self._exercise.check_form(
             landmarks,
             baselines=self._baselines,
         )
+
+        # Exercises may optionally return rep_valid as a 4th item.
+        if len(result) == 4:
+            checks, metric, active_side, rep_valid = result
+        else:
+            checks, metric, active_side = result
+            rep_valid = True
+
         self._active_side = active_side
 
-        # ── 2. Update baselines if not yet set for this rep ───────────
-        # check_form() may populate baselines (e.g. elbow x at curl start)
-        # We pass _baselines by reference so the exercise can write into it.
-        # Baselines are reset after each rep completes (see below).
-
-        # ── 3. Feed faults into rep counter / hold timer ──────────────
         rep_event = None
-        faults    = []
+        faults = []
 
         if self._is_hold:
-            # Hold exercise: just track elapsed time
+            # Hold exercise: track elapsed time while all checks pass.
             all_ok = all(c["ok"] for c in checks)
             if all_ok:
                 if self._hold_start is None:
                     self._hold_start = time.time()
             else:
-                self._hold_start = None     # reset timer if form breaks
+                self._hold_start = None
 
             hold_seconds = (
                 time.time() - self._hold_start
-                if self._hold_start else 0.0
+                if self._hold_start is not None else 0.0
             )
 
         else:
-            # Rep exercise: feed form faults then update state machine
+            # Rep exercise: collect any in-rep faults.
             for check in checks:
-                if not check["ok"]:
+                if not check["ok"] and check.get("message"):
                     self._counter.record_fault(check["message"])
 
-            rep_event = self._counter.update(metric)
+            # Shoulder press uses a session baseline gate for lockout.
+            if self.exercise_name == "shoulder_press":
+                rep_valid = self._baselines.get("hit_lockout", False)
+
+            rep_event = self._counter.update(metric, rep_valid=rep_valid)
 
             if rep_event is not None:
                 faults = list(getattr(self._counter, "last_faults", []))
+
+                # Add shoulder-press-specific completion feedback.
+                if self.exercise_name == "shoulder_press" and not rep_valid:
+                    if "extend fully overhead" not in faults:
+                        faults.insert(0, "extend fully overhead")
+
+                if self.exercise_name == "lunge" and not rep_valid:
+                    if not self._exercise._state.get("gate_return_passed", False):
+                        if "step back to your starting position" not in faults:
+                            faults.insert(0, "step back to your starting position")
+
                 self._trigger_audio(rep_event, faults)
-                self._baselines = {}    # reset baselines for next rep
+                self._baselines = {}  # reset per-rep baselines
             else:
-                # Trigger in-rep audio cues for the most important fault
                 self._trigger_form_cues(checks)
 
-        # ── 4. Build response ─────────────────────────────────────────
         response = {
-            "phase":       "hold" if self._is_hold else self._counter.phase_label,
-            "rep_count":   0 if self._is_hold else self._counter.total_reps,
-            "valid_reps":  0 if self._is_hold else self._counter.valid_reps,
+            "phase": "hold" if self._is_hold else self._counter.phase_label,
+            "rep_count": 0 if self._is_hold else self._counter.total_reps,
+            "valid_reps": 0 if self._is_hold else self._counter.valid_reps,
             "active_side": self._active_side,
-            "checks":      checks,
-            "rep_event":   rep_event,
-            "faults":      faults,
+            "checks": checks,
+            "rep_event": rep_event,
+            "faults": faults,
         }
 
         if self._is_hold:
@@ -191,7 +151,6 @@ class Session:
         if rep_event == "valid":
             audio.say("great rep", priority=True)
         else:
-            # Speak the first fault as the primary coaching cue
             if faults:
                 audio.say(faults[0], priority=True)
             else:
@@ -201,9 +160,8 @@ class Session:
         """
         During a rep, speak the most important failing check.
         Only one cue per frame — the first failing check wins.
-        The cooldown in audio.py ensures it doesn't repeat immediately.
         """
         for check in checks:
             if not check["ok"] and check.get("message"):
                 audio.say(check["message"])
-                break   # one cue per frame is enough
+                break

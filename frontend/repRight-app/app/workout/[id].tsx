@@ -18,10 +18,14 @@ export default function WorkoutDetailScreen() {
 
   if (!plan) {
     return (
-      <SafeAreaView style={styles.root}>
+      <ScreenWrapper>        
+      <View style={styles.root}>
         <Text style={{ padding: 24, color: Colors.text }}>Workout not found.</Text>
-      </SafeAreaView>
+      </View>
+      </ScreenWrapper>
     );
+
+      
   }
 
   return (
